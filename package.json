@@ -6,7 +6,7 @@
   "author": "HEKATAE",
   "repository": {
     "type": "git",
-    "url": "https://github.com/hekatae/hekatae-crypto.git"
+    "url": "git+https://github.com/hekatae/hekatae-crypto.git"
   },
   "homepage": "https://github.com/hekatae/hekatae-crypto#readme",
   "bugs": {
@@ -41,9 +41,6 @@
     "README.md",
     "SECURITY.md"
   ],
-  "publishConfig": {
-    "provenance": true
-  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
