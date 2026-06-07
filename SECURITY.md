@@ -66,4 +66,4 @@ release notes and security advisories (unless they prefer to remain anonymous).
 ## License
 
 This security policy is provided under the same license as the project:
-[Apache-2.0](./LICENSE).
+[Apache-2.0](https://github.com/hekatae/hekatae-crypto/blob/main/LICENSE).

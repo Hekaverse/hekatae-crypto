@@ -1,6 +1,6 @@
 {
   "name": "hekatae-crypto",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Client-side cryptography for legacy messaging — AES-256-GCM, Argon2id, Shamir's Secret Sharing, and the Trust Lattice threshold encryption scheme.",
   "license": "Apache-2.0",
   "author": "HEKATAE",

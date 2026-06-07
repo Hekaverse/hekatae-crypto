@@ -117,4 +117,4 @@ is produced.
 
 ## License
 
-Apache-2.0 — see [LICENSE](./LICENSE).
+Apache-2.0 — see [LICENSE](https://github.com/hekatae/hekatae-crypto/blob/main/LICENSE).
