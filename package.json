@@ -38,8 +38,12 @@
     "dist",
     "src",
     "LICENSE",
-    "README.md"
+    "README.md",
+    "SECURITY.md"
   ],
+  "publishConfig": {
+    "provenance": true
+  },
   "scripts": {
     "build": "tsc",
     "test": "vitest run",
