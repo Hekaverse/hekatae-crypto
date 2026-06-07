@@ -1,0 +1,62 @@
+{
+  "name": "hekatae-crypto",
+  "version": "1.0.0",
+  "description": "Client-side cryptography for legacy messaging — AES-256-GCM, Argon2id, Shamir's Secret Sharing, and the Trust Lattice threshold encryption scheme.",
+  "license": "Apache-2.0",
+  "author": "HEKATAE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/hekatae/hekatae-crypto.git"
+  },
+  "homepage": "https://github.com/hekatae/hekatae-crypto#readme",
+  "bugs": {
+    "url": "https://github.com/hekatae/hekatae-crypto/issues"
+  },
+  "keywords": [
+    "cryptography",
+    "encryption",
+    "aes-gcm",
+    "argon2",
+    "shamir-secret-sharing",
+    "threshold-cryptography",
+    "webcrypto",
+    "legacy-messaging",
+    "digital-legacy"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "main": "./dist/index.js",
+  "module": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "import": "./dist/index.js",
+      "types": "./dist/index.d.ts"
+    }
+  },
+  "files": [
+    "dist",
+    "src",
+    "LICENSE",
+    "README.md"
+  ],
+  "scripts": {
+    "build": "tsc",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "lint": "tsc --noEmit",
+    "prepare": "npm run build"
+  },
+  "dependencies": {
+    "hash-wasm": "^4.12.0",
+    "shamir-secret-sharing": "^0.0.4"
+  },
+  "devDependencies": {
+    "@types/node": "^20.17.0",
+    "typescript": "^5.7.0",
+    "vitest": "^3.0.0"
+  },
+  "engines": {
+    "node": ">=18.0.0"
+  }
+}
