@@ -7,6 +7,7 @@ import {
   decryptShare,
 } from "../src/key-derivation";
 import { importPDK, generateAESKey } from "../src/browser-crypto";
+import { deriveKeyPDK } from "../src/argon2";
 
 // Ensure crypto.subtle is available
 beforeAll(() => {
@@ -15,12 +16,18 @@ beforeAll(() => {
   }
 });
 
+async function derivePdkForTest(password: string, salt: string, userId?: string) {
+  return deriveKeyPDK({
+    pass: password,
+    salt: userId ? salt + userId : salt,
+  });
+}
+
 describe("Key Derivation (UMK / PDK)", () => {
   describe("setupUserKeys", () => {
     it("should generate all required key material including sentinel", async () => {
       const result = await setupUserKeys("my-password");
       expect(result.umkBase64).toBeTruthy();
-      expect(result.pdkBase64).toBeTruthy();
       expect(result.encryptedUMK).toBeTruthy();
       expect(result.shareA).toBeTruthy();
       expect(result.shareB).toBeTruthy();
@@ -40,13 +47,14 @@ describe("Key Derivation (UMK / PDK)", () => {
     it("should include userId in salt when provided", async () => {
       const r1 = await setupUserKeys("password", "user-1");
       const r2 = await setupUserKeys("password", "user-2");
-      expect(r1.pdkBase64).not.toBe(r2.pdkBase64);
+      const pdk1 = await derivePdkForTest("password", r1.salt, "user-1");
+      const pdk2 = await derivePdkForTest("password", r2.salt, "user-2");
+      expect(pdk1).not.toBe(pdk2);
     });
 
     it("should generate valid base64 strings", async () => {
       const result = await setupUserKeys("password");
       expect(() => atob(result.umkBase64)).not.toThrow();
-      expect(() => atob(result.pdkBase64)).not.toThrow();
       expect(() => atob(result.encryptedUMK)).not.toThrow();
       expect(() => atob(result.shareA)).not.toThrow();
       expect(() => atob(result.shareB)).not.toThrow();
@@ -142,7 +150,8 @@ describe("Key Derivation (UMK / PDK)", () => {
   describe("generateRecoveryShares", () => {
     it("should generate new shares from existing UMK", async () => {
       const setup = await setupUserKeys("password");
-      const pdkKey = await importPDK(setup.pdkBase64);
+      const pdkBase64 = await derivePdkForTest("password", setup.salt);
+      const pdkKey = await importPDK(pdkBase64);
       const recovery = await generateRecoveryShares(setup.umkBase64, pdkKey);
       expect(recovery.shareA).toBeTruthy();
       expect(recovery.shareB).toBeTruthy();
@@ -151,7 +160,8 @@ describe("Key Derivation (UMK / PDK)", () => {
 
     it("should reconstruct UMK from recovery shares", async () => {
       const setup = await setupUserKeys("password");
-      const pdkKey = await importPDK(setup.pdkBase64);
+      const pdkBase64 = await derivePdkForTest("password", setup.salt);
+      const pdkKey = await importPDK(pdkBase64);
       const recovery = await generateRecoveryShares(setup.umkBase64, pdkKey);
       const reconstructed = await reconstructUMKFromShares(recovery.shareB, recovery.shareC);
       expect(reconstructed).toBe(setup.umkBase64);
@@ -159,7 +169,8 @@ describe("Key Derivation (UMK / PDK)", () => {
 
     it("should generate different shares than original", async () => {
       const setup = await setupUserKeys("password");
-      const pdkKey = await importPDK(setup.pdkBase64);
+      const pdkBase64 = await derivePdkForTest("password", setup.salt);
+      const pdkKey = await importPDK(pdkBase64);
       const recovery = await generateRecoveryShares(setup.umkBase64, pdkKey);
       // New shares will be different due to randomness in SSS
       expect(recovery.shareA).not.toBe(setup.shareA);

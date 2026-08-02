@@ -168,5 +168,60 @@ describe("Recording Crypto", () => {
 
       expect(decrypted.size).toBe(0);
     });
+
+    it("should roundtrip with AAD", async () => {
+      const umk = await createTestUMK();
+      const aad = new TextEncoder().encode("hekatae:aad:v1:recording-123:LEGACY");
+      const plaintext = new Blob(["aad recording"], { type: "text/plain" });
+
+      const encrypted = await encryptRecording(plaintext, umk, aad);
+      const decrypted = await decryptRecording(
+        encrypted.ciphertextBlob,
+        encrypted.iv,
+        encrypted.authTag,
+        encrypted.encryptedREK,
+        umk,
+        aad
+      );
+
+      expect(await decrypted.text()).toBe("aad recording");
+    });
+
+    it("should reject decryption with mismatched AAD", async () => {
+      const umk = await createTestUMK();
+      const aad = new TextEncoder().encode("hekatae:aad:v1:recording-123:LEGACY");
+      const plaintext = new Blob(["aad recording"], { type: "text/plain" });
+
+      const encrypted = await encryptRecording(plaintext, umk, aad);
+      const wrongAad = new TextEncoder().encode("hekatae:aad:v1:recording-999:LEGACY");
+      await expect(
+        decryptRecording(
+          encrypted.ciphertextBlob,
+          encrypted.iv,
+          encrypted.authTag,
+          encrypted.encryptedREK,
+          umk,
+          wrongAad
+        )
+      ).rejects.toThrow();
+    });
+
+    it("should fall back to no-AAD decryption for legacy recordings", async () => {
+      const umk = await createTestUMK();
+      const plaintext = new Blob(["legacy recording"], { type: "text/plain" });
+
+      const encrypted = await encryptRecording(plaintext, umk);
+      const aad = new TextEncoder().encode("hekatae:aad:v1:recording-123:LEGACY");
+      const decrypted = await decryptRecording(
+        encrypted.ciphertextBlob,
+        encrypted.iv,
+        encrypted.authTag,
+        encrypted.encryptedREK,
+        umk,
+        aad
+      );
+
+      expect(await decrypted.text()).toBe("legacy recording");
+    });
   });
 });

@@ -42,6 +42,18 @@ export const CONTRACT_DIMENSIONS: Record<DeliveryContract, Dimension[]> = {
 };
 
 /**
+ * Threshold (k) for each contract tier: any k distinct dimension shares can
+ * reconstruct the Content Key. This gives real M-of-N threshold semantics
+ * instead of requiring every dimension.
+ */
+export const CONTRACT_THRESHOLD: Record<DeliveryContract, number> = {
+  SIMPLE: 2,     // 2-of-2: only two dimensions exist
+  STANDARD: 2,   // 2-of-3
+  SECURE: 3,     // 3-of-4
+  PARANOID: 4,   // 4-of-5
+};
+
+/**
  * Generate a random 256-bit AES key for encrypting message content.
  * This is the Content Key (CK) that will be split across the lattice.
  */
@@ -66,22 +78,23 @@ async function importContentKey(base64Key: string): Promise<CryptoKey> {
 /**
  * Split a Content Key into shares based on a Delivery Contract.
  *
- * The number of shares equals the number of dimensions in the contract.
- * Threshold equals the number of shares (all required).
+ * The number of shares equals the number of dimensions in the contract (n).
+ * The threshold (k) is defined by CONTRACT_THRESHOLD so that any k distinct
+ * shares can reconstruct the Content Key.
  */
 export async function splitContentKey(
   ck: CryptoKey,
   contract: DeliveryContract
 ): Promise<{ contract: DeliveryContract; shares: { dimension: Dimension; share: string }[] }> {
   const dimensions = CONTRACT_DIMENSIONS[contract];
-  const threshold = dimensions.length;
+  const threshold = CONTRACT_THRESHOLD[contract];
 
   // Export CK to bytes
   const ckBase64 = await exportContentKey(ck);
   const ckBytes = new Uint8Array(base64ToArrayBuffer(ckBase64));
 
-  // Split into shares
-  const shareBase64List = await splitSecret(ckBytes, threshold, threshold);
+  // Split into shares: n total shares, k required to reconstruct
+  const shareBase64List = await splitSecret(ckBytes, dimensions.length, threshold);
 
   // Map each share to its dimension
   const shares = dimensions.map((dimension, index) => ({
@@ -109,16 +122,23 @@ export async function reconstructContentKey(shareBase64List: string[]): Promise<
 /**
  * Evaluate whether a set of available dimensions satisfies a delivery contract.
  *
+ * A contract is satisfied when at least `CONTRACT_THRESHOLD[contract]` distinct
+ * required dimensions are present. This gives true M-of-N threshold semantics
+ * rather than requiring every dimension.
+ *
  * Example:
  *   evaluateContract("STANDARD", ["TIME", "IDENTITY", "SERVER"]) → true
- *   evaluateContract("STANDARD", ["TIME", "SERVER"]) → false
+ *   evaluateContract("STANDARD", ["TIME", "SERVER"]) → true  (2-of-3)
+ *   evaluateContract("STANDARD", ["TIME"]) → false
  */
 export function evaluateContract(
   contract: DeliveryContract,
   availableDimensions: Dimension[]
 ): boolean {
   const required = CONTRACT_DIMENSIONS[contract];
-  return required.every((dim) => availableDimensions.includes(dim));
+  const threshold = CONTRACT_THRESHOLD[contract];
+  const presentCount = required.filter((dim) => availableDimensions.includes(dim)).length;
+  return presentCount >= threshold;
 }
 
 /**
@@ -132,7 +152,7 @@ export function getRequiredDimensions(contract: DeliveryContract): Dimension[] {
  * Get the threshold (number of shares required) for a contract.
  */
 export function getContractThreshold(contract: DeliveryContract): number {
-  return CONTRACT_DIMENSIONS[contract].length;
+  return CONTRACT_THRESHOLD[contract];
 }
 
 /**

@@ -32,18 +32,22 @@ export interface EncryptedRecording {
  * 2. Encrypt the blob with REK via AES-256-GCM
  * 3. Encrypt REK with the user's UMK
  *
+ * @param aad - Optional AAD (e.g. buildRecordingAAD(recordingId, contract)).
+ *   If provided, decryption must use the same AAD.
+ *
  * Returns the ciphertext blob + metadata needed for decryption.
  */
 export async function encryptRecording(
   plaintextBlob: Blob,
-  umkKey: CryptoKey
+  umkKey: CryptoKey,
+  aad?: Uint8Array
 ): Promise<EncryptedRecording> {
   // 1. Generate per-recording key
   const rek = await generateDataKey();
 
   // 2. Encrypt blob with REK
   const plaintextArray = new Uint8Array(await plaintextBlob.arrayBuffer());
-  const encrypted = await encryptData(plaintextArray, rek);
+  const encrypted = await encryptData(plaintextArray, rek, aad);
 
   // 3. Wrap REK with UMK
   const encryptedREK = await wrapKey(rek, umkKey);
@@ -78,19 +82,24 @@ export async function encryptRecording(
  * 1. Decrypt REK with UMK
  * 2. Decrypt blob with REK
  * 3. Return plaintext Blob
+ *
+ * @param aad - Optional AAD that was provided during encryption. If decryption
+ *   with AAD fails, the function automatically retries without AAD to support
+ *   legacy recordings that were encrypted before AAD binding was introduced.
  */
 export async function decryptRecording(
   ciphertextBlob: Blob,
   iv: string,
   authTag: string,
   encryptedREK: string,
-  umkKey: CryptoKey
+  umkKey: CryptoKey,
+  aad?: Uint8Array
 ): Promise<Blob> {
   // 1. Unwrap REK with UMK
   const rek = await unwrapKey(encryptedREK, umkKey);
 
   // 2. Decrypt blob with REK using shared utility
-  return decryptCiphertextBlob(ciphertextBlob, iv, authTag, rek);
+  return decryptCiphertextBlob(ciphertextBlob, iv, authTag, rek, undefined, aad);
 }
 
 

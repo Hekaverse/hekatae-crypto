@@ -122,7 +122,7 @@ describe("Trust Lattice Cryptography", () => {
     it("should fail with missing shares", async () => {
       const ck = await generateContentKey();
       const { shares } = await splitContentKey(ck, "STANDARD");
-      const partialShares = [shares[0].share]; // Only 1 of 3
+      const partialShares = [shares[0].share]; // Only 1 of threshold 2
 
       await expect(reconstructContentKey(partialShares)).rejects.toThrow();
     });
@@ -160,13 +160,21 @@ describe("Trust Lattice Cryptography", () => {
       expect(evaluateContract("STANDARD", ["TIME", "IDENTITY", "SERVER", "CONSENT"])).toBe(true);
     });
 
-    it("should return false for subset of dimensions", () => {
-      expect(evaluateContract("STANDARD", ["TIME", "SERVER"])).toBe(false);
+    it("should return true for threshold-sized subsets", () => {
+      expect(evaluateContract("STANDARD", ["TIME", "SERVER"])).toBe(true);
+      expect(evaluateContract("STANDARD", ["TIME", "IDENTITY"])).toBe(true);
+      expect(evaluateContract("SECURE", ["TIME", "IDENTITY", "SERVER"])).toBe(true);
+      expect(evaluateContract("PARANOID", ["TIME", "IDENTITY", "SERVER", "CONSENT"])).toBe(true);
+    });
+
+    it("should return false for subsets below the threshold", () => {
+      expect(evaluateContract("STANDARD", ["TIME"])).toBe(false);
+      expect(evaluateContract("SECURE", ["TIME", "SERVER"])).toBe(false);
       expect(evaluateContract("PARANOID", ["TIME", "IDENTITY", "SERVER"])).toBe(false);
     });
 
     it("should return false for wrong dimensions", () => {
-      expect(evaluateContract("STANDARD", ["TIME", "SERVER", "PHYSICAL"])).toBe(false);
+      expect(evaluateContract("STANDARD", ["IDENTITY", "PHYSICAL"])).toBe(false);
     });
 
     it("should return false for empty dimensions", () => {
@@ -180,12 +188,13 @@ describe("Trust Lattice Cryptography", () => {
       });
     });
 
-    it("should return false for all contracts when any dimension is missing", () => {
+    it("should return false for all contracts when below threshold", () => {
       ALL_CONTRACTS.forEach((contract) => {
         const dims = getRequiredDimensions(contract);
-        if (dims.length > 1) {
-          const missingOne = dims.slice(1);
-          expect(evaluateContract(contract, missingOne)).toBe(false);
+        const threshold = getContractThreshold(contract);
+        if (dims.length > threshold) {
+          const belowThreshold = dims.slice(0, threshold - 1);
+          expect(evaluateContract(contract, belowThreshold)).toBe(false);
         }
       });
     });
@@ -199,16 +208,27 @@ describe("Trust Lattice Cryptography", () => {
   });
 
   describe("getContractThreshold", () => {
-    it.each(ALL_CONTRACTS)("should return number of dimensions for %s", (contract) => {
+    it.each(ALL_CONTRACTS)("should return threshold <= number of dimensions for %s", (contract) => {
       const threshold = getContractThreshold(contract);
-      expect(threshold).toBe(CONTRACT_DIMENSIONS[contract].length);
+      expect(threshold).toBeLessThanOrEqual(CONTRACT_DIMENSIONS[contract].length);
+      expect(threshold).toBeGreaterThanOrEqual(2);
     });
 
-    it("should match the number of shares produced by splitContentKey", async () => {
+    it.each([["SIMPLE", 2], ["STANDARD", 2], ["SECURE", 3], ["PARANOID", 4]] as [DeliveryContract, number][])(
+      "should return correct threshold for %s",
+      (contract, expected) => {
+        expect(getContractThreshold(contract)).toBe(expected);
+      }
+    );
+
+    it("should allow reconstruction with exactly threshold shares", async () => {
       const ck = await generateContentKey();
       for (const contract of ALL_CONTRACTS) {
         const { shares } = await splitContentKey(ck, contract);
-        expect(shares.length).toBe(getContractThreshold(contract));
+        const threshold = getContractThreshold(contract);
+        const subset = shares.slice(0, threshold).map((s) => s.share);
+        const reconstructed = await reconstructContentKey(subset);
+        expect(reconstructed.type).toBe("secret");
       }
     });
   });

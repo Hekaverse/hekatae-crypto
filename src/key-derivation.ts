@@ -26,7 +26,8 @@ export interface KeySetupPayload {
 
 export interface KeySetupResult {
   umkBase64: string;
-  pdkBase64: string;
+  // pdkBase64 intentionally omitted: PDK is ephemeral and must be re-derived from
+  // the user's password + salt when needed.
   encryptedUMK: string;
   shareA: string; // encrypted with PDK
   shareB: string; // raw share for server
@@ -95,7 +96,6 @@ export async function setupUserKeys(
 
   return {
     umkBase64,
-    pdkBase64,
     encryptedUMK,
     shareA,
     shareB,

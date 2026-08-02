@@ -61,7 +61,7 @@ import {
 
 // 1. Set up a new user
 const keys = await setupUserKeys("correct horse battery staple", "user-123");
-// keys.umkBase64, keys.pdkBase64, keys.encryptedUMK,
+// keys.umkBase64, keys.encryptedUMK,
 // keys.shareA, keys.shareB, keys.shareC, keys.salt, keys.sentinel
 
 // 2. Recover UMK from password

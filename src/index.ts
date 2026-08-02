@@ -22,6 +22,14 @@ export {
   base64ToArrayBuffer,
 } from "./browser-crypto.js";
 
+// ─── Authenticated Additional Data (AAD) ───
+export {
+  buildRecordingAAD,
+  parseRecordingAAD,
+  AAD_VERSION,
+} from "./aad.js";
+export type { RecordingAAD } from "./aad.js";
+
 // ─── WebCrypto wrappers ───
 export {
   generateAESKey,
@@ -71,6 +79,15 @@ export type {
 // ─── Per-recording encryption ───
 export { encryptRecording, decryptRecording } from "./recording-crypto.js";
 export type { EncryptedRecording } from "./recording-crypto.js";
+
+// ─── Encryption type discriminator ───
+export {
+  inferEncryptionType,
+  isEncrypted,
+  isTrustLattice,
+  isLegacyClientSide,
+} from "./encryption-types.js";
+export type { EncryptionType, RecordingLike, MediaManifestItem } from "./encryption-types.js";
 
 // ─── Ciphertext blob integrity + decryption ───
 export {

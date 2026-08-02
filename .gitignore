@@ -26,3 +26,6 @@ coverage/
 # OS
 .DS_Store
 Thumbs.db
+
+# Local session artifacts
+*-output.log

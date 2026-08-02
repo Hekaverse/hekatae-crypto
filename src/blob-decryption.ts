@@ -61,13 +61,17 @@ export function verifyAuthTag(
  * @param authTag - Base64-encoded auth tag from metadata
  * @param key - The decryption key (CK for Trust Lattice, REK for legacy)
  * @param blobType - MIME type for the resulting Blob
+ * @param aad - Optional AAD that was provided during encryption. If decryption
+ *   with AAD fails, the function automatically retries without AAD to support
+ *   legacy recordings.
  */
 export async function decryptCiphertextBlob(
   ciphertextBlob: Blob,
   iv: string,
   authTag: string,
   key: CryptoKey,
-  blobType?: string
+  blobType?: string,
+  aad?: Uint8Array
 ): Promise<Blob> {
   const cipherArray = new Uint8Array(await ciphertextBlob.arrayBuffer());
 
@@ -90,11 +94,21 @@ export async function decryptCiphertextBlob(
     authTag,
   };
 
-  const plaintext = await decryptData(encrypted, key);
-
-  return new Blob([plaintext as unknown as BlobPart], {
-    type: blobType || ciphertextBlob.type || "application/octet-stream",
-  });
+  try {
+    const plaintext = await decryptData(encrypted, key, aad);
+    return new Blob([plaintext as unknown as BlobPart], {
+      type: blobType || ciphertextBlob.type || "application/octet-stream",
+    });
+  } catch (err) {
+    // Fallback for legacy recordings encrypted before AAD binding
+    if (aad) {
+      const plaintext = await decryptData(encrypted, key, undefined);
+      return new Blob([plaintext as unknown as BlobPart], {
+        type: blobType || ciphertextBlob.type || "application/octet-stream",
+      });
+    }
+    throw err;
+  }
 }
 
 

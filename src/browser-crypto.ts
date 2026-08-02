@@ -146,15 +146,20 @@ export async function generateKeyBase64(
 /**
  * Encrypt data with AES-256-GCM.
  * Returns ciphertext, iv, and authTag as base64 strings.
+ *
+ * @param additionalData - Optional AAD (Additional Authenticated Data) to bind
+ *   the ciphertext to a context (e.g. recording id + contract). Must be supplied
+ *   again at decryption time.
  */
 export async function encryptData(
   plaintext: Uint8Array,
-  key: CryptoKey
+  key: CryptoKey,
+  additionalData?: Uint8Array
 ): Promise<EncryptionResult> {
   const iv = crypto.getRandomValues(new Uint8Array(IV_LENGTH));
 
   const ciphertextBuffer = await crypto.subtle.encrypt(
-    { name: ALGORITHM, iv },
+    { name: ALGORITHM, iv, additionalData: additionalData as BufferSource },
     key,
     plaintext as BufferSource
   );
@@ -175,10 +180,14 @@ export async function encryptData(
 
 /**
  * Decrypt data with AES-256-GCM.
+ *
+ * @param additionalData - Optional AAD that was provided during encryption.
+ *   Omitting or supplying the wrong AAD will cause decryption to fail.
  */
 export async function decryptData(
   result: EncryptionResult,
-  key: CryptoKey
+  key: CryptoKey,
+  additionalData?: Uint8Array
 ): Promise<Uint8Array> {
   const iv = new Uint8Array(base64ToArrayBuffer(result.iv));
   const dataCipher = new Uint8Array(base64ToArrayBuffer(result.ciphertext));
@@ -190,7 +199,7 @@ export async function decryptData(
   fullCipher.set(authTag, dataCipher.length);
 
   const plaintextBuffer = await crypto.subtle.decrypt(
-    { name: ALGORITHM, iv },
+    { name: ALGORITHM, iv, additionalData: additionalData as BufferSource },
     key,
     fullCipher as BufferSource
   );
@@ -203,10 +212,11 @@ export async function decryptData(
  */
 export async function encryptString(
   text: string,
-  key: CryptoKey
+  key: CryptoKey,
+  additionalData?: Uint8Array
 ): Promise<EncryptionResult> {
   const encoder = new TextEncoder();
-  return encryptData(encoder.encode(text), key);
+  return encryptData(encoder.encode(text), key, additionalData);
 }
 
 /**
@@ -214,9 +224,10 @@ export async function encryptString(
  */
 export async function decryptToString(
   result: EncryptionResult,
-  key: CryptoKey
+  key: CryptoKey,
+  additionalData?: Uint8Array
 ): Promise<string> {
-  const plaintext = await decryptData(result, key);
+  const plaintext = await decryptData(result, key, additionalData);
   return new TextDecoder().decode(plaintext);
 }
 
@@ -297,7 +308,7 @@ export async function deriveKeyFromPassphrase(
     {
       name: "PBKDF2",
       salt: salt as BufferSource,
-      iterations: 100000,
+      iterations: 600000,
       hash: "SHA-256",
     },
     keyMaterial,

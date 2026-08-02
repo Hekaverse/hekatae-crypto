@@ -22,6 +22,28 @@ jobs:
         with:
           node-version: ${{ matrix.node-version }}
 
+      - name: Check for .env files on disk
+        run: |
+          files=$(find . -type f \( -name '.env' -o -name '.env.*' \) ! -name '*.example' -print)
+          if [ -n "$files" ]; then
+            echo "ERROR: Environment files found on disk:"
+            echo "$files"
+            exit 1
+          else
+            echo "OK: No environment files on disk"
+          fi
+
+      - name: Check for npm auth tokens in .npmrc
+        run: |
+          files=$(find . -type f -name '.npmrc' -print)
+          if [ -n "$files" ] && grep -R '_authToken' $files > /dev/null 2>&1; then
+            echo "ERROR: .npmrc files contain auth tokens:"
+            grep -R '_authToken' $files
+            exit 1
+          else
+            echo "OK: No npm auth tokens in .npmrc"
+          fi
+
       - name: Install dependencies
         run: npm install
 

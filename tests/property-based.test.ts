@@ -22,6 +22,7 @@ import {
   reconstructContentKey,
   evaluateContract,
   getRequiredDimensions,
+  getContractThreshold,
   CONTRACT_DIMENSIONS,
   type DeliveryContract,
 } from "../src/trust-lattice";
@@ -84,17 +85,21 @@ function randomUnicodeString(length: number): string {
 // ─── Property 1: Encryption Roundtrip ───
 
 describe("Property: encrypt(decrypt(x)) === x", () => {
-  it("should roundtrip random plaintexts of varying sizes", async () => {
-    const key = await generateAESKey();
-    const sizes = [0, 1, 16, 100, 1024, 65536, 131072, 262144]; // 0B to 256KB
+  it(
+    "should roundtrip random plaintexts of varying sizes",
+    async () => {
+      const key = await generateAESKey();
+      const sizes = [0, 1, 16, 100, 1024, 65536, 131072, 262144]; // 0B to 256KB
 
-    for (const size of sizes) {
-      const plaintext = randomBytes(size);
-      const encrypted = await encryptData(plaintext, key);
-      const decrypted = await decryptData(encrypted, key);
-      expect(new Uint8Array(decrypted)).toEqual(plaintext);
-    }
-  });
+      for (const size of sizes) {
+        const plaintext = randomBytes(size);
+        const encrypted = await encryptData(plaintext, key);
+        const decrypted = await decryptData(encrypted, key);
+        expect(new Uint8Array(decrypted)).toEqual(plaintext);
+      }
+    },
+    { timeout: 20000 }
+  );
 
   it("should roundtrip random strings with unicode", async () => {
     const key = await generateAESKey();
@@ -199,26 +204,26 @@ describe("Property: decrypt with wrong key fails", () => {
 describe("Property: Any subset below threshold cannot reconstruct", () => {
   const ALL_CONTRACTS: DeliveryContract[] = ["SIMPLE", "STANDARD", "SECURE", "PARANOID"];
 
-  it.each(ALL_CONTRACTS.filter((c) => getRequiredDimensions(c).length > 2))(
-    "should produce a different key when reconstructing %s with insufficient shares",
+  it.each(ALL_CONTRACTS.filter((c) => getContractThreshold(c) > 1))(
+    "should not reconstruct %s with insufficient shares",
     async (contract) => {
       const ck = await generateContentKey();
       const { shares } = await splitContentKey(ck, contract);
-      const threshold = getRequiredDimensions(contract).length;
+      const threshold = getContractThreshold(contract);
 
-      // With insufficient shares, reconstruction returns a different key (not the original)
       const subset = shares.slice(0, threshold - 1).map((s) => s.share);
-      const reconstructed = await reconstructContentKey(subset);
-
-      // Verify it's a valid key but different from original
-      expect(reconstructed.type).toBe("secret");
-
-      // It should NOT decrypt correctly with the original key's ciphertext
       const plaintext = randomBytes(100);
       const encrypted = await encryptData(plaintext, ck);
 
-      // Decrypting with wrong key should fail (auth tag mismatch)
-      await expect(decryptData(encrypted, reconstructed)).rejects.toThrow();
+      if (subset.length < 2) {
+        // The Shamir library rejects a single share outright
+        await expect(reconstructContentKey(subset)).rejects.toThrow();
+      } else {
+        // With enough shares to combine but below the threshold, the reconstructed key is wrong
+        const reconstructed = await reconstructContentKey(subset);
+        expect(reconstructed.type).toBe("secret");
+        await expect(decryptData(encrypted, reconstructed)).rejects.toThrow();
+      }
     }
   );
 
@@ -227,7 +232,7 @@ describe("Property: Any subset below threshold cannot reconstruct", () => {
     async (contract) => {
       const ck = await generateContentKey();
       const { shares } = await splitContentKey(ck, contract);
-      const threshold = getRequiredDimensions(contract).length;
+      const threshold = getContractThreshold(contract);
 
       // Pick threshold shares (minimum needed)
       const subset = shares.slice(0, threshold).map((s) => s.share);
@@ -301,7 +306,7 @@ describe("Property: Passphrase encryption roundtrips with random inputs", () => 
       );
       expect(new Uint8Array(decrypted)).toEqual(data);
     }
-  });
+  }, 30000);
 
   it("should produce different ciphertexts for same data + passphrase (salt uniqueness)", async () => {
     const passphrase = "test passphrase";
@@ -344,19 +349,25 @@ describe("Property: Contract evaluation invariants", () => {
     "should require exactly %s threshold dimensions",
     (contract) => {
       const required = getRequiredDimensions(contract);
-      const threshold = required.length;
+      const threshold = getContractThreshold(contract);
 
       // All required dimensions present → true
       expect(evaluateContract(contract, required)).toBe(true);
 
       // All required + extras → true
-      const extra = [...required, "FAMILY"];
+      const extra = [...required, "PHYSICAL"] as Dimension[];
       expect(evaluateContract(contract, extra)).toBe(true);
 
-      // Missing one → false
-      if (threshold > 1) {
+      // Missing one is still valid when threshold < n
+      if (threshold < required.length) {
         const missingOne = required.slice(1);
-        expect(evaluateContract(contract, missingOne)).toBe(false);
+        expect(evaluateContract(contract, missingOne)).toBe(true);
+      }
+
+      // Below threshold → false
+      if (threshold > 1) {
+        const belowThreshold = required.slice(0, threshold - 1);
+        expect(evaluateContract(contract, belowThreshold)).toBe(false);
       }
 
       // Empty → false

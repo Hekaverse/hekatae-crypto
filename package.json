@@ -30,8 +30,70 @@
   "types": "./dist/index.d.ts",
   "exports": {
     ".": {
+      "types": "./dist/index.d.ts",
       "import": "./dist/index.js",
-      "types": "./dist/index.d.ts"
+      "require": "./dist/cjs/index.js",
+      "default": "./dist/index.js"
+    },
+    "./browser-crypto": {
+      "types": "./dist/browser-crypto.d.ts",
+      "import": "./dist/browser-crypto.js",
+      "require": "./dist/cjs/browser-crypto.js",
+      "default": "./dist/browser-crypto.js"
+    },
+    "./aad": {
+      "types": "./dist/aad.d.ts",
+      "import": "./dist/aad.js",
+      "require": "./dist/cjs/aad.js",
+      "default": "./dist/aad.js"
+    },
+    "./recording-crypto": {
+      "types": "./dist/recording-crypto.d.ts",
+      "import": "./dist/recording-crypto.js",
+      "require": "./dist/cjs/recording-crypto.js",
+      "default": "./dist/recording-crypto.js"
+    },
+    "./blob-decryption": {
+      "types": "./dist/blob-decryption.d.ts",
+      "import": "./dist/blob-decryption.js",
+      "require": "./dist/cjs/blob-decryption.js",
+      "default": "./dist/blob-decryption.js"
+    },
+    "./file-encryption": {
+      "types": "./dist/file-encryption.d.ts",
+      "import": "./dist/file-encryption.js",
+      "require": "./dist/cjs/file-encryption.js",
+      "default": "./dist/file-encryption.js"
+    },
+    "./key-derivation": {
+      "types": "./dist/key-derivation.d.ts",
+      "import": "./dist/key-derivation.js",
+      "require": "./dist/cjs/key-derivation.js",
+      "default": "./dist/key-derivation.js"
+    },
+    "./trust-lattice": {
+      "types": "./dist/trust-lattice.d.ts",
+      "import": "./dist/trust-lattice.js",
+      "require": "./dist/cjs/trust-lattice.js",
+      "default": "./dist/trust-lattice.js"
+    },
+    "./shamir": {
+      "types": "./dist/shamir.d.ts",
+      "import": "./dist/shamir.js",
+      "require": "./dist/cjs/shamir.js",
+      "default": "./dist/shamir.js"
+    },
+    "./argon2": {
+      "types": "./dist/argon2.d.ts",
+      "import": "./dist/argon2.js",
+      "require": "./dist/cjs/argon2.js",
+      "default": "./dist/argon2.js"
+    },
+    "./encryption-types": {
+      "types": "./dist/encryption-types.d.ts",
+      "import": "./dist/encryption-types.js",
+      "require": "./dist/cjs/encryption-types.js",
+      "default": "./dist/encryption-types.js"
     }
   },
   "files": [
@@ -42,9 +104,12 @@
     "SECURITY.md"
   ],
   "scripts": {
-    "build": "tsc",
+    "build": "npm run build:esm && npm run build:cjs",
+    "build:esm": "tsc",
+    "build:cjs": "tsc -p tsconfig.cjs.json && node -e \"require('fs').writeFileSync('dist/cjs/package.json', JSON.stringify({type:'commonjs'}))\"",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:coverage": "vitest run --coverage",
     "lint": "tsc --noEmit",
     "prepare": "npm run build"
   },
@@ -54,6 +119,7 @@
   },
   "devDependencies": {
     "@types/node": "^20.17.0",
+    "@vitest/coverage-v8": "^3.0.0",
     "typescript": "^5.7.0",
     "vitest": "^3.0.0"
   },
