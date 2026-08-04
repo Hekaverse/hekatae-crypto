@@ -17,6 +17,7 @@ import {
   base64ToArrayBuffer,
 } from "./browser-crypto.js";
 import { splitSecret, combineShares } from "./shamir.js";
+import { zeroize } from "./zeroize.js";
 
 export interface KeySetupPayload {
   encryptedMasterKey: string; // base64: encPDK(UMK)
@@ -80,9 +81,17 @@ export async function setupUserKeys(
   const dummyKey = await generateDataKey();
   const sentinel = await wrapKey(dummyKey, umkKey);
 
-  // 6. Split UMK into 3 shares (2-of-3 threshold)
+  // 6. Split UMK into 3 shares (2-of-3 threshold).
+  // Note: umkBase64 is a JS string and cannot be reliably scrubbed (strings
+  // are immutable); the worker-based path avoids this base64 round-trip
+  // entirely. The raw byte copy IS zeroed immediately after splitting.
   const umkBytes = new Uint8Array(base64ToArrayBuffer(umkBase64));
-  const [share1, share2, share3] = await splitSecret(umkBytes, 3, 2);
+  let share1: string, share2: string, share3: string;
+  try {
+    [share1, share2, share3] = await splitSecret(umkBytes, 3, 2);
+  } finally {
+    zeroize(umkBytes);
+  }
 
   // 7. Encrypt shares
   // Share A: encrypted with PDK (user keeps this)
@@ -129,9 +138,15 @@ export async function decryptUMK(
   const pdkKey = await importPDK(pdkBase64);
   const umkKey = await unwrapKey(encryptedUMK, pdkKey);
 
-  // Export UMK back to base64
+  // Export UMK back to base64. The exported raw bytes are scrubbed right
+  // after encoding; the returned base64 string itself cannot be zeroed
+  // (immutable JS string) — another reason the worker path is recommended.
   const raw = await crypto.subtle.exportKey("raw", umkKey);
-  return arrayBufferToBase64(raw);
+  try {
+    return arrayBufferToBase64(raw);
+  } finally {
+    zeroize(raw);
+  }
 }
 
 /**
@@ -147,20 +162,37 @@ export async function reconstructUMKFromShares(
   shareB: string,
   sentinel?: string
 ): Promise<string> {
-  const umkBytes = await combineShares([shareA, shareB]);
-
-  if (sentinel) {
-    const umkKey = await importWrappingKey(arrayBufferToBase64(umkBytes));
-    try {
-      await unwrapKey(sentinel, umkKey, ["encrypt", "decrypt"]);
-    } catch {
+  let umkBytes: Uint8Array;
+  try {
+    umkBytes = await combineShares([shareA, shareB]);
+  } catch (err) {
+    // When a sentinel is in play, collapse ALL reconstruction failures (corrupt
+    // tail/x-coordinate, length mismatch, duplicate share) into one generic error:
+    // distinct upstream messages would leak WHERE the corruption is.
+    if (sentinel) {
       throw new Error(
         "Share verification failed: one or more shares are corrupted or invalid."
       );
     }
+    throw err;
   }
 
-  return arrayBufferToBase64(umkBytes);
+  try {
+    if (sentinel) {
+      const umkKey = await importWrappingKey(arrayBufferToBase64(umkBytes));
+      try {
+        await unwrapKey(sentinel, umkKey, ["encrypt", "decrypt"]);
+      } catch {
+        throw new Error(
+          "Share verification failed: one or more shares are corrupted or invalid."
+        );
+      }
+    }
+
+    return arrayBufferToBase64(umkBytes);
+  } finally {
+    zeroize(umkBytes);
+  }
 }
 
 /**
@@ -174,7 +206,12 @@ export async function generateRecoveryShares(
 ): Promise<RecoverySharesResult> {
   // Split UMK into 3 shares (2-of-3 threshold)
   const umkBytes = new Uint8Array(base64ToArrayBuffer(umkBase64));
-  const [share1, share2, share3] = await splitSecret(umkBytes, 3, 2);
+  let share1: string, share2: string, share3: string;
+  try {
+    [share1, share2, share3] = await splitSecret(umkBytes, 3, 2);
+  } finally {
+    zeroize(umkBytes);
+  }
 
   // Encrypt Share A with PDK
   const shareA = await encryptShare(share1, pdkKey);
@@ -197,11 +234,16 @@ async function encryptShare(
   const bytes = new Uint8Array(base64ToArrayBuffer(shareBase64));
 
   const iv = crypto.getRandomValues(new Uint8Array(12));
-  const encrypted = await crypto.subtle.encrypt(
-    { name: "AES-GCM", iv },
-    key,
-    bytes
-  );
+  let encrypted: ArrayBuffer;
+  try {
+    encrypted = await crypto.subtle.encrypt(
+      { name: "AES-GCM", iv },
+      key,
+      bytes
+    );
+  } finally {
+    zeroize(bytes); // plaintext share bytes
+  }
 
   const full = new Uint8Array(iv.length + encrypted.byteLength);
   full.set(iv, 0);
@@ -228,5 +270,9 @@ export async function decryptShare(
     ciphertext
   );
 
-  return arrayBufferToBase64(decrypted);
+  try {
+    return arrayBufferToBase64(decrypted);
+  } finally {
+    zeroize(decrypted); // plaintext share bytes
+  }
 }

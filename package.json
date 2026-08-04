@@ -94,6 +94,18 @@
       "import": "./dist/encryption-types.js",
       "require": "./dist/cjs/encryption-types.js",
       "default": "./dist/encryption-types.js"
+    },
+    "./worker": {
+      "types": "./dist/worker-client.d.ts",
+      "import": "./dist/worker-client.js",
+      "require": "./dist/cjs/worker-client.js",
+      "default": "./dist/worker-client.js"
+    },
+    "./worker/entry": {
+      "types": "./dist/worker.d.ts",
+      "import": "./dist/worker.js",
+      "require": "./dist/cjs/worker.js",
+      "default": "./dist/worker.js"
     }
   },
   "files": [

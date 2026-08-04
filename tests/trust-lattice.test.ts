@@ -132,10 +132,16 @@ describe("Trust Lattice Cryptography", () => {
       const { shares: simpleShares } = await splitContentKey(ck, "SIMPLE");
       const { shares: standardShares } = await splitContentKey(ck, "STANDARD");
 
-      // Try to reconstruct with mixed shares from different splits
-      // combineShares returns bytes, importKey may succeed with garbage bytes,
-      // but the resulting key won't match the original
-      const mixedShares = [simpleShares[0].share, standardShares[0].share];
+      // Try to reconstruct with mixed shares from different splits.
+      // x-coordinates are random per split, so pick shares whose last byte
+      // (the x-coordinate) differs — otherwise combine() throws its duplicate
+      // guard instead of yielding the garbage key this test asserts on.
+      const b64last = (s: string) => Buffer.from(s, "base64").at(-1);
+      const standardPick =
+        b64last(standardShares[0].share) !== b64last(simpleShares[0].share)
+          ? standardShares[0].share
+          : standardShares[1].share;
+      const mixedShares = [simpleShares[0].share, standardPick];
       const garbageKey = await reconstructContentKey(mixedShares);
 
       // Verify the garbage key is not equivalent to the original

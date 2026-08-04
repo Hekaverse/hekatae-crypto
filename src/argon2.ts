@@ -5,6 +5,7 @@
 
 import { argon2id } from "hash-wasm";
 import { arrayBufferToBase64 } from "./browser-crypto.js";
+import { zeroize } from "./zeroize.js";
 
 export interface Argon2Options {
   pass: string;
@@ -46,7 +47,11 @@ export async function deriveKeyPDK(options: Argon2Options): Promise<string> {
     bytes[i] = parseInt(hashHex.substring(i * 2, i * 2 + 2), 16);
   }
 
-  return arrayBufferToBase64(bytes);
+  try {
+    return arrayBufferToBase64(bytes);
+  } finally {
+    zeroize(bytes); // raw PDK bytes; the base64 string cannot be zeroed
+  }
 }
 
 /**
@@ -62,24 +67,32 @@ export async function deriveKeyPBKDF2(
   const passBuffer = encoder.encode(password);
   const saltBuffer = encoder.encode(salt);
 
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    passBuffer,
-    { name: "PBKDF2" },
-    false,
-    ["deriveBits"]
-  );
+  try {
+    const keyMaterial = await crypto.subtle.importKey(
+      "raw",
+      passBuffer,
+      { name: "PBKDF2" },
+      false,
+      ["deriveBits"]
+    );
 
-  const derivedBits = await crypto.subtle.deriveBits(
-    {
-      name: "PBKDF2",
-      salt: saltBuffer,
-      iterations,
-      hash: "SHA-256",
-    },
-    keyMaterial,
-    256
-  );
+    const derivedBits = await crypto.subtle.deriveBits(
+      {
+        name: "PBKDF2",
+        salt: saltBuffer,
+        iterations,
+        hash: "SHA-256",
+      },
+      keyMaterial,
+      256
+    );
 
-  return arrayBufferToBase64(derivedBits);
+    try {
+      return arrayBufferToBase64(derivedBits);
+    } finally {
+      zeroize(derivedBits); // raw PDK bytes
+    }
+  } finally {
+    zeroize(passBuffer); // password bytes
+  }
 }

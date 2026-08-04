@@ -134,7 +134,11 @@ describe("Key Derivation (UMK / PDK)", () => {
 
     it("should throw when sentinel verification fails (tampered shares)", async () => {
       const setup = await setupUserKeys("password");
-      const tampered = setup.shareB.slice(0, -4) + "XXXX";
+      // Tamper a payload byte, NOT the tail: the last share byte is the
+      // x-coordinate, and corrupting it can trip the library's duplicate-x
+      // guard before sentinel verification (flaky). Middle bytes always
+      // reach the sentinel check.
+      const tampered = "A" + setup.shareB.slice(1);
       await expect(
         reconstructUMKFromShares(setup.shareC, tampered, setup.sentinel)
       ).rejects.toThrow("Share verification failed");

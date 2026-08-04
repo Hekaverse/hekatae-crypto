@@ -14,20 +14,26 @@
  *
  * Contracts (user-selectable tiers):
  *   SIMPLE   : T + S                     (fallback for non-registered recipients)
- *   STANDARD : T + I + S                 (registered recipient, zero-knowledge)
+ *   STANDARD : T + I + S                 (registered recipient, server-assisted)
  *   SECURE   : T + I + S + C             (registered + recovery contact confirmation)
  *   PARANOID : T + I + S + P + C         (all dimensions including physical token)
  *
- * Security properties:
- *   — No single party holds the complete CK
- *   — HEKATAE alone cannot decrypt (only holds Share S)
+ * Security properties (as implemented in the HEKATAE web app today):
+ *   — No single client-side party holds the complete CK; the sender retains a
+ *     UMK-wrapped copy (encryptedREK) for vault preview
+ *   — HEKATAE holds and can unseal both the TIME and SERVER shares, which meet
+ *     the threshold for SIMPLE/STANDARD on their own: those tiers are
+ *     server-assisted delivery by design, not zero-knowledge
+ *   — SECURE/PARANOID thresholds additionally require non-server shares
+ *     (IDENTITY/CONSENT/PHYSICAL), which are KMS-encrypted at rest; binding
+ *     them to recipients, trustees, or devices is on the roadmap
  *   — Subpoena to cloud provider reveals only ciphertext
- *   — Subpoena to HEKATAE reveals only one share + ciphertext
  *   — Recipient must be authenticated AND delivery conditions met
  */
 
 import { generateDataKey, exportKey, importDataKey, arrayBufferToBase64, base64ToArrayBuffer } from "./browser-crypto.js";
 import { splitSecret, combineShares } from "./shamir.js";
+import { zeroize } from "./zeroize.js";
 
 export type DeliveryContract = "SIMPLE" | "STANDARD" | "SECURE" | "PARANOID";
 
@@ -93,8 +99,15 @@ export async function splitContentKey(
   const ckBase64 = await exportContentKey(ck);
   const ckBytes = new Uint8Array(base64ToArrayBuffer(ckBase64));
 
-  // Split into shares: n total shares, k required to reconstruct
-  const shareBase64List = await splitSecret(ckBytes, dimensions.length, threshold);
+  // Split into shares: n total shares, k required to reconstruct.
+  // Raw CK bytes are scrubbed immediately after splitting (the base64
+  // string form cannot be zeroed — see zeroize.ts).
+  let shareBase64List: string[];
+  try {
+    shareBase64List = await splitSecret(ckBytes, dimensions.length, threshold);
+  } finally {
+    zeroize(ckBytes);
+  }
 
   // Map each share to its dimension
   const shares = dimensions.map((dimension, index) => ({
@@ -115,8 +128,12 @@ export async function splitContentKey(
  */
 export async function reconstructContentKey(shareBase64List: string[]): Promise<CryptoKey> {
   const ckBytes = await combineShares(shareBase64List);
-  const ckBase64 = arrayBufferToBase64(ckBytes);
-  return importContentKey(ckBase64);
+  try {
+    const ckBase64 = arrayBufferToBase64(ckBytes);
+    return await importContentKey(ckBase64);
+  } finally {
+    zeroize(ckBytes); // raw reconstructed CK bytes
+  }
 }
 
 /**

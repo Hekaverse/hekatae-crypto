@@ -18,6 +18,7 @@ import {
   base64ToArrayBuffer,
 } from "./browser-crypto.js";
 import { decryptCiphertextBlob } from "./blob-decryption.js";
+import { zeroize } from "./zeroize.js";
 
 export interface EncryptedRecording {
   ciphertextBlob: Blob; // The encrypted media blob
@@ -45,9 +46,15 @@ export async function encryptRecording(
   // 1. Generate per-recording key
   const rek = await generateDataKey();
 
-  // 2. Encrypt blob with REK
+  // 2. Encrypt blob with REK.
+  // plaintextArray is our own copy of the caller's Blob — zero it after use.
   const plaintextArray = new Uint8Array(await plaintextBlob.arrayBuffer());
-  const encrypted = await encryptData(plaintextArray, rek, aad);
+  let encrypted: Awaited<ReturnType<typeof encryptData>>;
+  try {
+    encrypted = await encryptData(plaintextArray, rek, aad);
+  } finally {
+    zeroize(plaintextArray);
+  }
 
   // 3. Wrap REK with UMK
   const encryptedREK = await wrapKey(rek, umkKey);

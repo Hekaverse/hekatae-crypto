@@ -3,6 +3,8 @@
  * All operations run client-side. No keys or plaintext leave this module.
  */
 
+import { zeroize } from "./zeroize.js";
+
 const ALGORITHM = "AES-GCM";
 const KEY_LENGTH = 256;
 const IV_LENGTH = 12; // 96 bits recommended for GCM
@@ -80,7 +82,11 @@ export async function generateWrappingKey(): Promise<CryptoKey> {
  */
 export async function exportKey(key: CryptoKey): Promise<string> {
   const raw = await crypto.subtle.exportKey("raw", key);
-  return arrayBufferToBase64(raw);
+  try {
+    return arrayBufferToBase64(raw);
+  } finally {
+    zeroize(raw); // raw key bytes; the base64 string itself cannot be zeroed
+  }
 }
 
 /**
@@ -101,13 +107,17 @@ export async function importKey(
   for (let i = 0; i < binary.length; i++) {
     bytes[i] = binary.charCodeAt(i);
   }
-  return crypto.subtle.importKey(
-    "raw",
-    bytes,
-    { name: ALGORITHM },
-    extractable,
-    usages
-  );
+  try {
+    return await crypto.subtle.importKey(
+      "raw",
+      bytes,
+      { name: ALGORITHM },
+      extractable,
+      usages
+    );
+  } finally {
+    zeroize(bytes); // raw key bytes; WebCrypto has already copied them internally
+  }
 }
 
 /**
@@ -296,32 +306,40 @@ export async function deriveKeyFromPassphrase(
   const encoder = new TextEncoder();
   const passBuffer = encoder.encode(passphrase);
 
-  const keyMaterial = await crypto.subtle.importKey(
-    "raw",
-    passBuffer,
-    { name: "PBKDF2" },
-    false,
-    ["deriveBits"]
-  );
+  try {
+    const keyMaterial = await crypto.subtle.importKey(
+      "raw",
+      passBuffer,
+      { name: "PBKDF2" },
+      false,
+      ["deriveBits"]
+    );
 
-  const derivedBits = await crypto.subtle.deriveBits(
-    {
-      name: "PBKDF2",
-      salt: salt as BufferSource,
-      iterations: 600000,
-      hash: "SHA-256",
-    },
-    keyMaterial,
-    256
-  );
+    const derivedBits = await crypto.subtle.deriveBits(
+      {
+        name: "PBKDF2",
+        salt: salt as BufferSource,
+        iterations: 600000,
+        hash: "SHA-256",
+      },
+      keyMaterial,
+      256
+    );
 
-  return crypto.subtle.importKey(
-    "raw",
-    derivedBits,
-    { name: ALGORITHM },
-    false,
-    ["encrypt", "decrypt"]
-  );
+    try {
+      return await crypto.subtle.importKey(
+        "raw",
+        derivedBits,
+        { name: ALGORITHM },
+        false,
+        ["encrypt", "decrypt"]
+      );
+    } finally {
+      zeroize(derivedBits); // derived key bytes
+    }
+  } finally {
+    zeroize(passBuffer); // password bytes
+  }
 }
 
 /**
