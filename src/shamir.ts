@@ -5,6 +5,7 @@
 
 import { split, combine } from "shamir-secret-sharing";
 import { arrayBufferToBase64, base64ToArrayBuffer } from "./browser-crypto.js";
+import { zeroize } from "./zeroize.js";
 
 /**
  * Split a secret (Uint8Array) into `shares` total shares,
@@ -19,8 +20,12 @@ export async function splitSecret(
 ): Promise<string[]> {
   // Ensure the secret is a plain Uint8Array (not a view or cross-realm instance)
   const normalized = new Uint8Array(secret);
-  const shareBuffers = await split(normalized, shares, threshold);
-  return shareBuffers.map((buf) => arrayBufferToBase64(buf));
+  try {
+    const shareBuffers = await split(normalized, shares, threshold);
+    return shareBuffers.map((buf) => arrayBufferToBase64(buf));
+  } finally {
+    zeroize(normalized); // our internal copy of the secret
+  }
 }
 
 /**

@@ -84,13 +84,11 @@ export class WorkerCryptoClient {
    * The result deliberately contains NO raw UMK — it stays in the worker.
    */
   async setupUserKeys(
-    password: string,
-    userId?: string
+    password: string
   ): Promise<WorkerKeySetupResult> {
     return (await this.call({
       op: "setupUserKeys",
       password,
-      userId,
     })) as WorkerKeySetupResult;
   }
 
@@ -101,10 +99,9 @@ export class WorkerCryptoClient {
   async unlock(
     encryptedUMK: string,
     password: string,
-    salt: string,
-    userId?: string
+    salt: string
   ): Promise<void> {
-    await this.call({ op: "unlock", encryptedUMK, password, salt, userId });
+    await this.call({ op: "unlock", encryptedUMK, password, salt });
   }
 
   /** Whether the worker currently holds an unlocked UMK. */
@@ -168,15 +165,13 @@ export class WorkerCryptoClient {
   async generateRecoveryShares(
     encryptedUMK: string,
     password: string,
-    salt: string,
-    userId?: string
+    salt: string
   ): Promise<WorkerRecoveryShares> {
     return (await this.call({
       op: "generateRecoveryShares",
       encryptedUMK,
       password,
       salt,
-      userId,
     })) as WorkerRecoveryShares;
   }
 
@@ -187,15 +182,13 @@ export class WorkerCryptoClient {
   async exportUMK(
     encryptedUMK: string,
     password: string,
-    salt: string,
-    userId?: string
+    salt: string
   ): Promise<string> {
     return (await this.call({
       op: "exportUMK",
       encryptedUMK,
       password,
       salt,
-      userId,
     })) as string;
   }
 

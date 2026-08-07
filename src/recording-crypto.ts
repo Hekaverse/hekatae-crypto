@@ -90,9 +90,9 @@ export async function encryptRecording(
  * 2. Decrypt blob with REK
  * 3. Return plaintext Blob
  *
- * @param aad - Optional AAD that was provided during encryption. If decryption
- *   with AAD fails, the function automatically retries without AAD to support
- *   legacy recordings that were encrypted before AAD binding was introduced.
+ * @param aad - Optional AAD that was provided during encryption. Decryption is
+ *   strict: when AAD is supplied, a mismatch fails with no legacy no-AAD
+ *   retry (see decryptCiphertextBlob's requireAAD option).
  */
 export async function decryptRecording(
   ciphertextBlob: Blob,
@@ -105,8 +105,10 @@ export async function decryptRecording(
   // 1. Unwrap REK with UMK
   const rek = await unwrapKey(encryptedREK, umkKey);
 
-  // 2. Decrypt blob with REK using shared utility
-  return decryptCiphertextBlob(ciphertextBlob, iv, authTag, rek, undefined, aad);
+  // 2. Decrypt blob with REK using shared utility (strict AAD mode)
+  return decryptCiphertextBlob(ciphertextBlob, iv, authTag, rek, undefined, aad, {
+    requireAAD: true,
+  });
 }
 
 

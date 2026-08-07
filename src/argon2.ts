@@ -4,7 +4,7 @@
  */
 
 import { argon2id } from "hash-wasm";
-import { arrayBufferToBase64 } from "./browser-crypto.js";
+import { arrayBufferToBase64, importPDK } from "./browser-crypto.js";
 import { zeroize } from "./zeroize.js";
 
 export interface Argon2Options {
@@ -31,21 +31,17 @@ export async function deriveKeyPDK(options: Argon2Options): Promise<string> {
   const saltBytes = stringToUint8Array(options.salt);
   const hashLen = options.hashLen ?? 32;
 
-  const hashHex = await argon2id({
+  // outputType "binary" returns the raw bytes directly — this avoids the
+  // intermediate hex string, which (like all JS strings) cannot be zeroed.
+  const bytes = await argon2id({
     password: options.pass,
     salt: saltBytes,
     parallelism: options.parallelism ?? 4,
     memorySize: options.mem ?? 65536,
     iterations: options.time ?? 3,
     hashLength: hashLen,
-    outputType: "hex",
+    outputType: "binary",
   });
-
-  // Convert hex to base64
-  const bytes = new Uint8Array(hashLen);
-  for (let i = 0; i < hashLen; i++) {
-    bytes[i] = parseInt(hashHex.substring(i * 2, i * 2 + 2), 16);
-  }
 
   try {
     return arrayBufferToBase64(bytes);
@@ -95,4 +91,97 @@ export async function deriveKeyPBKDF2(
   } finally {
     zeroize(passBuffer); // password bytes
   }
+}
+
+/** Logger for loud KDF-fallback signalling. Defaults to console.warn. */
+export type CryptoLogger = (message: string) => void;
+
+const defaultLogger: CryptoLogger = (message) => console.warn(message);
+
+/**
+ * True only when `err` means the Argon2id WASM module itself could not be
+ * loaded — never when the hash operation ran and merely failed. hash-wasm
+ * throws a fixed message when the WebAssembly global is missing, and
+ * WebAssembly.compile/instantiate rejections surface as WebAssembly.*Error.
+ * Any other error (bad input, OOM inside the hash, etc.) must NOT trigger a
+ * silent algorithm downgrade.
+ */
+export function isArgon2UnavailableError(err: unknown): boolean {
+  if (!(err instanceof Error)) return false;
+  if (err.message === "WebAssembly is not supported in this environment!") {
+    return true;
+  }
+  const wasm = (globalThis as { WebAssembly?: typeof WebAssembly }).WebAssembly;
+  if (wasm) {
+    return (
+      err instanceof wasm.CompileError ||
+      err instanceof wasm.LinkError ||
+      err instanceof wasm.RuntimeError
+    );
+  }
+  return false;
+}
+
+/**
+ * WRAP-time PDK derivation. Falls back to PBKDF2 ONLY when the Argon2id WASM
+ * module cannot be loaded (see isArgon2UnavailableError); any other Argon2
+ * failure is rethrown. The fallback is logged loudly because the algorithm
+ * choice is not recorded in the stored format (yet): an account wrapped with
+ * a PBKDF2-derived PDK is unwrapped via the legacy candidate in
+ * tryWithPDKCandidates.
+ */
+export async function derivePDKWithFallback(
+  password: string,
+  salt: string,
+  log: CryptoLogger = defaultLogger
+): Promise<string> {
+  try {
+    return await deriveKeyPDK({ pass: password, salt });
+  } catch (err) {
+    if (!isArgon2UnavailableError(err)) throw err;
+    log(
+      "[hekatae-crypto] Argon2id WASM unavailable — falling back to PBKDF2 for PDK derivation. " +
+        "Keys wrapped on this device use the legacy KDF and remain unlockable everywhere."
+    );
+    return deriveKeyPBKDF2(password, salt);
+  }
+}
+
+/**
+ * UNWRAP-time PDK resolution: run `attempt` with the Argon2id-derived PDK
+ * first; if that fails, retry with the legacy PBKDF2-derived PDK so accounts
+ * wrapped before Argon2id (or during a WASM outage) still unlock. When
+ * Argon2id itself is unavailable, only the PBKDF2 candidate is tried.
+ * A successful legacy-candidate attempt is logged loudly.
+ */
+export async function tryWithPDKCandidates<T>(
+  password: string,
+  salt: string,
+  attempt: (pdk: CryptoKey) => Promise<T>,
+  log: CryptoLogger = defaultLogger
+): Promise<T> {
+  let argon2AttemptFailed = false;
+  try {
+    const pdk = await importPDK(await deriveKeyPDK({ pass: password, salt }));
+    try {
+      return await attempt(pdk);
+    } catch {
+      argon2AttemptFailed = true; // fall through to the legacy candidate
+    }
+  } catch (err) {
+    if (!isArgon2UnavailableError(err)) throw err;
+    log(
+      "[hekatae-crypto] Argon2id WASM unavailable — trying the PBKDF2-derived PDK."
+    );
+  }
+
+  const legacyPdk = await importPDK(await deriveKeyPBKDF2(password, salt));
+  const result = await attempt(legacyPdk);
+  if (argon2AttemptFailed) {
+    log(
+      "[hekatae-crypto] Key material unlocked with the legacy PBKDF2-derived PDK " +
+        "(account predates Argon2id or was wrapped during an Argon2 outage)."
+    );
+  }
+  return result;
 }

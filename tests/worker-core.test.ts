@@ -1,6 +1,16 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { WorkerCryptoCore, handleRequest, type WorkerRequest } from "../src/worker-core";
-import { importWrappingKey, wrapKey, unwrapKey, generateDataKey, exportKey } from "../src/browser-crypto";
+import {
+  importWrappingKey,
+  importPDK,
+  wrapKey,
+  unwrapKey,
+  generateDataKey,
+  generateKeyBase64,
+  generateSalt,
+  exportKey,
+} from "../src/browser-crypto";
+import { deriveKeyPBKDF2 } from "../src/argon2";
 import { combineShares } from "../src/shamir";
 import { decryptUMK } from "../src/key-derivation";
 
@@ -34,10 +44,10 @@ describe("WorkerCryptoCore", () => {
 
     it("should produce an encryptedUMK that the classic API can decrypt (interop)", async () => {
       const core = new WorkerCryptoCore();
-      const result = await core.setupUserKeys(PASSWORD, "user-1");
+      const result = await core.setupUserKeys(PASSWORD);
       // The server-stored artifacts must be compatible with the existing
       // synchronous API (mobile + web depend on these formats).
-      const umk = await decryptUMK(result.encryptedUMK, PASSWORD, result.salt, "user-1");
+      const umk = await decryptUMK(result.encryptedUMK, PASSWORD, result.salt);
       expect(umk).toBeTruthy();
       expect(() => atob(umk)).not.toThrow();
     });
@@ -76,6 +86,35 @@ describe("WorkerCryptoCore", () => {
       ).rejects.toThrow();
       // A failed unlock must not clobber a previously held, valid UMK.
       expect(core.hasUMK()).toBe(true);
+    });
+
+    it("should unlock a legacy PBKDF2-wrapped UMK via the second candidate", async () => {
+      // Simulate an account whose UMK was wrapped with a PBKDF2-derived PDK
+      // (pre-Argon2id or wrapped during a WASM outage).
+      const umkBase64 = await generateKeyBase64(["wrapKey", "unwrapKey"]);
+      const umkKey = await importWrappingKey(umkBase64);
+      const salt = generateSalt(32);
+      const legacyPdk = await importPDK(await deriveKeyPBKDF2(PASSWORD, salt));
+      const encryptedUMK = await wrapKey(umkKey, legacyPdk);
+
+      const core = new WorkerCryptoCore();
+      await core.unlock(encryptedUMK, PASSWORD, salt);
+      expect(core.hasUMK()).toBe(true);
+      // And the exported UMK matches the originally wrapped key.
+      const exported = await core.exportUMK(encryptedUMK, PASSWORD, salt);
+      expect(exported).toBe(umkBase64);
+    });
+
+    it("should reject a wrong password against a PBKDF2-wrapped UMK", async () => {
+      const umkBase64 = await generateKeyBase64(["wrapKey", "unwrapKey"]);
+      const umkKey = await importWrappingKey(umkBase64);
+      const salt = generateSalt(32);
+      const legacyPdk = await importPDK(await deriveKeyPBKDF2(PASSWORD, salt));
+      const encryptedUMK = await wrapKey(umkKey, legacyPdk);
+
+      const core = new WorkerCryptoCore();
+      await expect(core.unlock(encryptedUMK, "wrong-password", salt)).rejects.toThrow();
+      expect(core.hasUMK()).toBe(false);
     });
   });
 

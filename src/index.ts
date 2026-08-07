@@ -48,6 +48,7 @@ export {
   wrapKey,
   unwrapKey,
   generateSalt,
+  constantTimeEqual,
   encryptWithPassphrase,
   decryptWithPassphrase,
 } from "./browser-crypto.js";
@@ -55,8 +56,14 @@ export {
 export type { EncryptionResult } from "./browser-crypto.js";
 
 // ─── Argon2id / PBKDF2 key derivation ───
-export { deriveKeyPDK, deriveKeyPBKDF2 } from "./argon2.js";
-export type { Argon2Options } from "./argon2.js";
+export {
+  deriveKeyPDK,
+  deriveKeyPBKDF2,
+  derivePDKWithFallback,
+  tryWithPDKCandidates,
+  isArgon2UnavailableError,
+} from "./argon2.js";
+export type { Argon2Options, CryptoLogger } from "./argon2.js";
 
 // ─── Shamir's Secret Sharing ───
 export { splitSecret, combineShares } from "./shamir.js";
@@ -95,6 +102,7 @@ export {
   verifyAuthTag,
   decryptCiphertextBlob,
 } from "./blob-decryption.js";
+export type { DecryptBlobOptions } from "./blob-decryption.js";
 
 // ─── Node.js file encryption helpers ───
 export { encryptFile, decryptFile } from "./file-encryption.js";

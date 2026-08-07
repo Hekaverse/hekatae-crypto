@@ -4,7 +4,7 @@ import {
   verifyAuthTag,
   decryptCiphertextBlob,
 } from "../src/blob-decryption";
-import { generateAESKey, encryptData } from "../src/browser-crypto";
+import { generateAESKey, encryptData, constantTimeEqual } from "../src/browser-crypto";
 
 // Polyfill Blob.prototype.arrayBuffer for jsdom if needed
 beforeAll(() => {
@@ -92,10 +92,32 @@ describe("Blob Decryption", () => {
     });
   });
 
+  describe("constantTimeEqual", () => {
+    it("should return true for identical byte arrays", () => {
+      const a = crypto.getRandomValues(new Uint8Array(16));
+      expect(constantTimeEqual(a, new Uint8Array(a))).toBe(true);
+    });
+
+    it("should return false when one byte differs", () => {
+      const a = crypto.getRandomValues(new Uint8Array(16));
+      const b = new Uint8Array(a);
+      b[7] ^= 0x01;
+      expect(constantTimeEqual(a, b)).toBe(false);
+    });
+
+    it("should return false on length mismatch", () => {
+      expect(constantTimeEqual(new Uint8Array(16), new Uint8Array(24))).toBe(false);
+    });
+
+    it("should return true for two empty arrays", () => {
+      expect(constantTimeEqual(new Uint8Array(0), new Uint8Array(0))).toBe(true);
+    });
+  });
+
   describe("decryptCiphertextBlob", () => {
-    async function buildCiphertextBlob(plaintext: string, key: CryptoKey): Promise<{ blob: Blob; iv: string; authTag: string }> {
+    async function buildCiphertextBlob(plaintext: string, key: CryptoKey, aad?: Uint8Array): Promise<{ blob: Blob; iv: string; authTag: string }> {
       const plaintextBytes = new TextEncoder().encode(plaintext);
-      const encrypted = await encryptData(plaintextBytes, key);
+      const encrypted = await encryptData(plaintextBytes, key, aad);
       // Build blob: ciphertext || authTag (16 bytes)
       const cipherBytes = new Uint8Array(
         atob(encrypted.ciphertext)
@@ -170,6 +192,45 @@ describe("Blob Decryption", () => {
       bytes[bytes.length - 1] ^= 0xFF;
       const tamperedBlob = new Blob([bytes]);
       await expect(decryptCiphertextBlob(tamperedBlob, iv, authTag, key)).rejects.toThrow();
+    });
+
+    it("strict mode: mismatched AAD must fail with no fallback", async () => {
+      const key = await generateAESKey();
+      const aadA = new TextEncoder().encode("hekatae:aad:v1:recording-A:STANDARD");
+      const aadB = new TextEncoder().encode("hekatae:aad:v1:recording-B:STANDARD");
+      const { blob, iv, authTag } = await buildCiphertextBlob("secret", key, aadA);
+      await expect(
+        decryptCiphertextBlob(blob, iv, authTag, key, undefined, aadB, { requireAAD: true })
+      ).rejects.toThrow();
+    });
+
+    it("strict mode: correct AAD still decrypts", async () => {
+      const key = await generateAESKey();
+      const aad = new TextEncoder().encode("hekatae:aad:v1:recording-1:STANDARD");
+      const { blob, iv, authTag } = await buildCiphertextBlob("secret", key, aad);
+      const decrypted = await decryptCiphertextBlob(blob, iv, authTag, key, undefined, aad, {
+        requireAAD: true,
+      });
+      expect(await blobToText(decrypted)).toBe("secret");
+    });
+
+    it("strict mode: legacy no-AAD blob does NOT silently decrypt when AAD is supplied", async () => {
+      // Blob was encrypted WITHOUT AAD; the caller supplies AAD and strict
+      // mode must refuse the silent no-AAD retry.
+      const key = await generateAESKey();
+      const aad = new TextEncoder().encode("hekatae:aad:v1:recording-1:LEGACY");
+      const { blob, iv, authTag } = await buildCiphertextBlob("legacy secret", key);
+      await expect(
+        decryptCiphertextBlob(blob, iv, authTag, key, undefined, aad, { requireAAD: true })
+      ).rejects.toThrow();
+    });
+
+    it("non-strict mode: legacy no-AAD blob still decrypts via the fallback", async () => {
+      const key = await generateAESKey();
+      const aad = new TextEncoder().encode("hekatae:aad:v1:recording-1:LEGACY");
+      const { blob, iv, authTag } = await buildCiphertextBlob("legacy secret", key);
+      const decrypted = await decryptCiphertextBlob(blob, iv, authTag, key, undefined, aad);
+      expect(await blobToText(decrypted)).toBe("legacy secret");
     });
   });
 });

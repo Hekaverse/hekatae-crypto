@@ -7,8 +7,9 @@ import {
   generateRecoveryShares,
 } from "../src/key-derivation";
 import { splitContentKey, generateContentKey } from "../src/trust-lattice";
-import { importPDK, deriveKeyFromPassphrase } from "../src/browser-crypto";
+import { importPDK, deriveKeyFromPassphrase, encryptString, generateDataKey } from "../src/browser-crypto";
 import { deriveKeyPDK } from "../src/argon2";
+import { splitSecret } from "../src/shamir";
 
 afterEach(() => {
   vi.restoreAllMocks();
@@ -116,5 +117,22 @@ describe("sensitive intermediates are zeroed after use", () => {
     const pdk = await deriveKeyPDK({ pass: "pw", salt: "some-salt" });
     expect(pdk).toBeTruthy();
     expect(zeroed).toContain(32);
+  });
+
+  it("splitSecret zeroes its normalized copy of the secret", async () => {
+    const secret = crypto.getRandomValues(new Uint8Array(32));
+    const zeroed = spyOnFill();
+    const shares = await splitSecret(secret, 3, 2);
+    expect(shares).toHaveLength(3);
+    expect(zeroed).toContain(32);
+  });
+
+  it("encryptString zeroes the encoded plaintext bytes", async () => {
+    const key = await generateDataKey();
+    const zeroed = spyOnFill();
+    // 20+ chars so the encoded buffer clears the 16-byte observation floor
+    const result = await encryptString("a secret longer than sixteen bytes", key);
+    expect(result.ciphertext).toBeTruthy();
+    expect(zeroed.length).toBeGreaterThan(0);
   });
 });

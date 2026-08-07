@@ -47,8 +47,13 @@ export function parseRecordingAAD(aad: Uint8Array): RecordingAAD {
   if (parts.length !== 5 || parts[0] !== "hekatae" || parts[1] !== "aad") {
     throw new Error("Invalid recording AAD format");
   }
+  const versionStr = parts[2].replace(/^v/, "");
+  const version = Number(versionStr);
+  if (versionStr === "" || !Number.isInteger(version)) {
+    throw new Error("Invalid recording AAD format");
+  }
   return {
-    version: Number(parts[2]),
+    version,
     recordingId: parts[3],
     deliveryContract: parts[4],
   };

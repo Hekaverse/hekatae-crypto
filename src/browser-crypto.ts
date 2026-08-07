@@ -108,6 +108,13 @@ export async function importKey(
     bytes[i] = binary.charCodeAt(i);
   }
   try {
+    // AES-256-GCM only: silently accepting 16/24-byte keys would downgrade to
+    // AES-128/192 without the caller noticing.
+    if (bytes.length !== KEY_LENGTH / 8) {
+      throw new Error(
+        `Invalid key length: expected 32 bytes for AES-256-GCM, got ${bytes.length}`
+      );
+    }
     return await crypto.subtle.importKey(
       "raw",
       bytes,
@@ -226,7 +233,12 @@ export async function encryptString(
   additionalData?: Uint8Array
 ): Promise<EncryptionResult> {
   const encoder = new TextEncoder();
-  return encryptData(encoder.encode(text), key, additionalData);
+  const bytes = encoder.encode(text);
+  try {
+    return await encryptData(bytes, key, additionalData);
+  } finally {
+    zeroize(bytes); // plaintext bytes; the source string itself cannot be zeroed
+  }
 }
 
 /**
@@ -285,6 +297,20 @@ export async function unwrapKey(
     true,
     usages
   );
+}
+
+/**
+ * Constant-time byte-wise comparison. Use instead of `===` on encoded forms
+ * when comparing authentication metadata (e.g. GCM auth tags). Returns false
+ * immediately on length mismatch — lengths are public here, contents are not.
+ */
+export function constantTimeEqual(a: Uint8Array, b: Uint8Array): boolean {
+  if (a.length !== b.length) return false;
+  let diff = 0;
+  for (let i = 0; i < a.length; i++) {
+    diff |= a[i] ^ b[i];
+  }
+  return diff === 0;
 }
 
 /**

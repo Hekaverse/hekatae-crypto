@@ -206,22 +206,68 @@ describe("Recording Crypto", () => {
       ).rejects.toThrow();
     });
 
-    it("should fall back to no-AAD decryption for legacy recordings", async () => {
+    it("strict AAD mode: a legacy no-AAD blob is NOT silently decrypted when AAD is supplied", async () => {
+      // decryptRecording is strict (requireAAD): supplying AAD for a blob
+      // that predates AAD binding must fail rather than silently retry
+      // without AAD. The non-strict fallback lives in decryptCiphertextBlob
+      // for call sites that genuinely need legacy support.
       const umk = await createTestUMK();
       const plaintext = new Blob(["legacy recording"], { type: "text/plain" });
 
       const encrypted = await encryptRecording(plaintext, umk);
       const aad = new TextEncoder().encode("hekatae:aad:v1:recording-123:LEGACY");
-      const decrypted = await decryptRecording(
-        encrypted.ciphertextBlob,
-        encrypted.iv,
-        encrypted.authTag,
-        encrypted.encryptedREK,
-        umk,
-        aad
-      );
+      await expect(
+        decryptRecording(
+          encrypted.ciphertextBlob,
+          encrypted.iv,
+          encrypted.authTag,
+          encrypted.encryptedREK,
+          umk,
+          aad
+        )
+      ).rejects.toThrow();
+    });
 
-      expect(await decrypted.text()).toBe("legacy recording");
+    it("transplant attack: the legacy no-AAD fallback must NOT rescue AAD-bound ciphertext in another recording's context", async () => {
+      // Attacker copies a ciphertext blob from recording A into recording B's
+      // delivery response. The client decrypts with B's AAD; that fails, and
+      // the legacy fallback retries WITHOUT AAD — but the blob was encrypted
+      // WITH AAD(A), so GCM authentication must fail there too.
+      const umk = await createTestUMK();
+      const aadA = new TextEncoder().encode("hekatae:aad:v1:recording-A:STANDARD");
+      const aadB = new TextEncoder().encode("hekatae:aad:v1:recording-B:STANDARD");
+      const plaintext = new Blob(["recording A secret"], { type: "text/plain" });
+
+      const encrypted = await encryptRecording(plaintext, umk, aadA);
+
+      await expect(
+        decryptRecording(
+          encrypted.ciphertextBlob,
+          encrypted.iv,
+          encrypted.authTag,
+          encrypted.encryptedREK,
+          umk,
+          aadB
+        )
+      ).rejects.toThrow();
+    });
+
+    it("tampered blob: flipping a ciphertext byte must fail authentication (with and without AAD)", async () => {
+      const umk = await createTestUMK();
+      const aad = new TextEncoder().encode("hekatae:aad:v1:recording-123:LEGACY");
+      const plaintext = new Blob(["integrity matters"], { type: "text/plain" });
+
+      const encrypted = await encryptRecording(plaintext, umk, aad);
+      const bytes = new Uint8Array(await encrypted.ciphertextBlob.arrayBuffer());
+      bytes[0] = bytes[0] ^ 0xff; // flip every bit in the first byte
+      const tampered = new Blob([bytes], { type: "application/octet-stream" });
+
+      await expect(
+        decryptRecording(tampered, encrypted.iv, encrypted.authTag, encrypted.encryptedREK, umk, aad)
+      ).rejects.toThrow();
+      await expect(
+        decryptRecording(tampered, encrypted.iv, encrypted.authTag, encrypted.encryptedREK, umk)
+      ).rejects.toThrow();
     });
   });
 });

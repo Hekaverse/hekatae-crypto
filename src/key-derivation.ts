@@ -4,7 +4,11 @@
  * It is never stored in plaintext; only encrypted with PDK or split into shares.
  */
 
-import { deriveKeyPDK, deriveKeyPBKDF2 } from "./argon2.js";
+import {
+  derivePDKWithFallback,
+  tryWithPDKCandidates,
+  type CryptoLogger,
+} from "./argon2.js";
 import {
   generateKeyBase64,
   generateDataKey,
@@ -49,26 +53,18 @@ export interface RecoverySharesResult {
  */
 export async function setupUserKeys(
   password: string,
-  userId?: string
+  log?: CryptoLogger
 ): Promise<KeySetupResult> {
   // 1. Generate random UMK (wrapping key)
   const umkBase64 = await generateKeyBase64(["wrapKey", "unwrapKey"]);
   const umkKey = await importWrappingKey(umkBase64);
 
-  // 2. Generate salt
+  // 2. Generate salt (32 random bytes — already unique per user)
   const salt = generateSalt(32);
 
-  // 3. Derive PDK from password + salt
-  let pdkBase64: string;
-  try {
-    pdkBase64 = await deriveKeyPDK({
-      pass: password,
-      salt: userId ? salt + userId : salt, // salt + userId as unique per-user salt
-    });
-  } catch {
-    // Fallback to PBKDF2 if Argon2 WASM fails
-    pdkBase64 = await deriveKeyPBKDF2(password, userId ? salt + userId : salt);
-  }
+  // 3. Derive PDK from password + salt (PBKDF2 fallback only if Argon2id
+  //    WASM is unavailable; logged loudly via `log`)
+  const pdkBase64 = await derivePDKWithFallback(password, salt, log);
 
   const pdkKey = await importPDK(pdkBase64);
 
@@ -122,21 +118,16 @@ export async function decryptUMK(
   encryptedUMK: string,
   password: string,
   salt: string,
-  userId?: string
+  log?: CryptoLogger
 ): Promise<string> {
-  const saltInput = userId ? salt + userId : salt;
-  let pdkBase64: string;
-  try {
-    pdkBase64 = await deriveKeyPDK({
-      pass: password,
-      salt: saltInput,
-    });
-  } catch {
-    pdkBase64 = await deriveKeyPBKDF2(password, saltInput);
-  }
-
-  const pdkKey = await importPDK(pdkBase64);
-  const umkKey = await unwrapKey(encryptedUMK, pdkKey);
+  // Try the Argon2id-derived PDK first, then the legacy PBKDF2-derived PDK,
+  // so accounts wrapped with either KDF unlock (see tryWithPDKCandidates).
+  const umkKey = await tryWithPDKCandidates(
+    password,
+    salt,
+    (pdkKey) => unwrapKey(encryptedUMK, pdkKey),
+    log
+  );
 
   // Export UMK back to base64. The exported raw bytes are scrubbed right
   // after encoding; the returned base64 string itself cannot be zeroed

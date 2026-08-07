@@ -8,7 +8,13 @@
  * RecordingPlayer, TrustLatticePlayer, and MixedMediaItem.
  */
 
-import { decryptData, type EncryptionResult, arrayBufferToBase64 } from "./browser-crypto.js";
+import {
+  decryptData,
+  type EncryptionResult,
+  arrayBufferToBase64,
+  base64ToArrayBuffer,
+  constantTimeEqual,
+} from "./browser-crypto.js";
 
 /**
  * Extract the auth tag from the end of a concatenated ciphertext blob.
@@ -45,8 +51,25 @@ export function verifyAuthTag(
   storedAuthTag: Uint8Array,
   metadataAuthTag: string
 ): boolean {
-  const storedAuthTagB64 = arrayBufferToBase64(storedAuthTag);
-  return storedAuthTagB64 === metadataAuthTag;
+  let metadataBytes: Uint8Array;
+  try {
+    metadataBytes = new Uint8Array(base64ToArrayBuffer(metadataAuthTag));
+  } catch {
+    return false; // not valid base64 → cannot match the stored tag
+  }
+  // Both values are public metadata, so this is hygiene rather than oracle
+  // defense — but compare byte-wise in constant time anyway.
+  return constantTimeEqual(storedAuthTag, metadataBytes);
+}
+
+export interface DecryptBlobOptions {
+  /**
+   * Strict AAD mode: when AAD is supplied and decryption with it fails, do
+   * NOT retry without AAD. Use this for every recording that was encrypted
+   * with AAD binding — the silent no-AAD retry would otherwise mask AAD
+   * mismatches (e.g. a blob transplanted from another recording).
+   */
+  requireAAD?: boolean;
 }
 
 /**
@@ -61,9 +84,10 @@ export function verifyAuthTag(
  * @param authTag - Base64-encoded auth tag from metadata
  * @param key - The decryption key (CK for Trust Lattice, REK for legacy)
  * @param blobType - MIME type for the resulting Blob
- * @param aad - Optional AAD that was provided during encryption. If decryption
- *   with AAD fails, the function automatically retries without AAD to support
- *   legacy recordings.
+ * @param aad - Optional AAD that was provided during encryption. Unless
+ *   `options.requireAAD` is set, a failed AAD decryption retries without AAD
+ *   to support legacy recordings.
+ * @param options - Set `requireAAD: true` to disable the legacy no-AAD retry.
  */
 export async function decryptCiphertextBlob(
   ciphertextBlob: Blob,
@@ -71,7 +95,8 @@ export async function decryptCiphertextBlob(
   authTag: string,
   key: CryptoKey,
   blobType?: string,
-  aad?: Uint8Array
+  aad?: Uint8Array,
+  options?: DecryptBlobOptions
 ): Promise<Blob> {
   const cipherArray = new Uint8Array(await ciphertextBlob.arrayBuffer());
 
@@ -100,8 +125,9 @@ export async function decryptCiphertextBlob(
       type: blobType || ciphertextBlob.type || "application/octet-stream",
     });
   } catch (err) {
-    // Fallback for legacy recordings encrypted before AAD binding
-    if (aad) {
+    // Fallback for legacy recordings encrypted before AAD binding — disabled
+    // in strict mode so an AAD mismatch can never silently downgrade.
+    if (aad && !options?.requireAAD) {
       const plaintext = await decryptData(encrypted, key, undefined);
       return new Blob([plaintext as unknown as BlobPart], {
         type: blobType || ciphertextBlob.type || "application/octet-stream",

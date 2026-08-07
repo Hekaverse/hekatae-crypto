@@ -116,6 +116,22 @@ describe("Browser Crypto (WebCrypto API)", () => {
       expect(imported.usages).toEqual(["encrypt", "wrapKey", "unwrapKey"]);
       expect(imported.extractable).toBe(false);
     });
+
+    it("should reject 16-byte keys (AES-128 downgrade)", async () => {
+      const key16 = btoa(String.fromCharCode(...new Uint8Array(16).fill(1)));
+      await expect(importKey(key16)).rejects.toThrow(/32 bytes/);
+    });
+
+    it("should reject 24-byte keys (AES-192 downgrade)", async () => {
+      const key24 = btoa(String.fromCharCode(...new Uint8Array(24).fill(1)));
+      await expect(importKey(key24)).rejects.toThrow(/32 bytes/);
+    });
+
+    it("should accept exactly 32-byte keys", async () => {
+      const key32 = btoa(String.fromCharCode(...crypto.getRandomValues(new Uint8Array(32))));
+      const imported = await importKey(key32);
+      expect(imported.algorithm.name).toBe("AES-GCM");
+    });
   });
 
   describe("importDataKey / importWrappingKey / importPDK", () => {

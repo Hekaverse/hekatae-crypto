@@ -6,8 +6,15 @@ import {
   generateRecoveryShares,
   decryptShare,
 } from "../src/key-derivation";
-import { importPDK, generateAESKey } from "../src/browser-crypto";
-import { deriveKeyPDK } from "../src/argon2";
+import {
+  importPDK,
+  importWrappingKey,
+  generateAESKey,
+  generateKeyBase64,
+  generateSalt,
+  wrapKey,
+} from "../src/browser-crypto";
+import { deriveKeyPDK, deriveKeyPBKDF2 } from "../src/argon2";
 
 // Ensure crypto.subtle is available
 beforeAll(() => {
@@ -16,10 +23,10 @@ beforeAll(() => {
   }
 });
 
-async function derivePdkForTest(password: string, salt: string, userId?: string) {
+async function derivePdkForTest(password: string, salt: string) {
   return deriveKeyPDK({
     pass: password,
-    salt: userId ? salt + userId : salt,
+    salt,
   });
 }
 
@@ -44,14 +51,6 @@ describe("Key Derivation (UMK / PDK)", () => {
       expect(r1.encryptedUMK).not.toBe(r2.encryptedUMK);
     });
 
-    it("should include userId in salt when provided", async () => {
-      const r1 = await setupUserKeys("password", "user-1");
-      const r2 = await setupUserKeys("password", "user-2");
-      const pdk1 = await derivePdkForTest("password", r1.salt, "user-1");
-      const pdk2 = await derivePdkForTest("password", r2.salt, "user-2");
-      expect(pdk1).not.toBe(pdk2);
-    });
-
     it("should generate valid base64 strings", async () => {
       const result = await setupUserKeys("password");
       expect(() => atob(result.umkBase64)).not.toThrow();
@@ -67,10 +66,12 @@ describe("Key Derivation (UMK / PDK)", () => {
       expect(atob(result.umkBase64).length).toBe(32);
     });
 
-    it("should handle empty password", async () => {
-      const result = await setupUserKeys("");
-      expect(result.umkBase64).toBeTruthy();
-      expect(result.encryptedUMK).toBeTruthy();
+    it("should reject an empty password (no silent PBKDF2 downgrade)", async () => {
+      // hash-wasm rejects empty passwords with a validation error. Before the
+      // KDF-fallback fix, this silently wrapped the account with PBKDF2 —
+      // exactly the undetectable downgrade F1 removes. Empty passwords are
+      // now refused instead of silently changing algorithms.
+      await expect(setupUserKeys("")).rejects.toThrow();
     });
 
     it("should handle unicode password", async () => {
@@ -87,12 +88,6 @@ describe("Key Derivation (UMK / PDK)", () => {
       expect(decrypted).toBe(setup.umkBase64);
     });
 
-    it("should work with userId in salt", async () => {
-      const setup = await setupUserKeys("password", "user-1");
-      const decrypted = await decryptUMK(setup.encryptedUMK, "password", setup.salt, "user-1");
-      expect(decrypted).toBe(setup.umkBase64);
-    });
-
     it("should fail with wrong password", async () => {
       const setup = await setupUserKeys("correct-password");
       await expect(decryptUMK(setup.encryptedUMK, "wrong-password", setup.salt)).rejects.toThrow();
@@ -102,16 +97,48 @@ describe("Key Derivation (UMK / PDK)", () => {
       const setup = await setupUserKeys("password");
       await expect(decryptUMK(setup.encryptedUMK, "password", "wrong-salt")).rejects.toThrow();
     });
+  });
 
-    it("should fail with wrong userId", async () => {
-      const setup = await setupUserKeys("password", "user-1");
-      await expect(decryptUMK(setup.encryptedUMK, "password", setup.salt, "user-2")).rejects.toThrow();
+  describe("KDF interop (legacy PBKDF2-wrapped accounts)", () => {
+    /** Wrap a UMK with the PBKDF2-derived PDK, as pre-Argon2id accounts did. */
+    async function wrapWithPBKDF2(password: string) {
+      const umkBase64 = await generateKeyBase64(["wrapKey", "unwrapKey"]);
+      const umkKey = await importWrappingKey(umkBase64);
+      const salt = generateSalt(32);
+      const pdkKey = await importPDK(await deriveKeyPBKDF2(password, salt));
+      const encryptedUMK = await wrapKey(umkKey, pdkKey);
+      return { umkBase64, encryptedUMK, salt };
+    }
+
+    it("decrypts a PBKDF2-wrapped UMK via the normal path", async () => {
+      const { umkBase64, encryptedUMK, salt } = await wrapWithPBKDF2("legacy-password");
+      const decrypted = await decryptUMK(encryptedUMK, "legacy-password", salt);
+      expect(decrypted).toBe(umkBase64);
     });
 
-    it("should handle empty password", async () => {
-      const setup = await setupUserKeys("");
-      const decrypted = await decryptUMK(setup.encryptedUMK, "", setup.salt);
+    it("flags the legacy-candidate success via the injected logger", async () => {
+      const { encryptedUMK, salt } = await wrapWithPBKDF2("legacy-password");
+      const messages: string[] = [];
+      await decryptUMK(encryptedUMK, "legacy-password", salt, (m) => messages.push(m));
+      expect(messages.some((m) => m.includes("PBKDF2"))).toBe(true);
+    });
+
+    it("still rejects a wrong password against a PBKDF2-wrapped UMK", async () => {
+      const { encryptedUMK, salt } = await wrapWithPBKDF2("legacy-password");
+      await expect(decryptUMK(encryptedUMK, "wrong-password", salt)).rejects.toThrow();
+    });
+
+    it("still decrypts an Argon2id-wrapped UMK without invoking the logger", async () => {
+      const setup = await setupUserKeys("modern-password");
+      const messages: string[] = [];
+      const decrypted = await decryptUMK(
+        setup.encryptedUMK,
+        "modern-password",
+        setup.salt,
+        (m) => messages.push(m)
+      );
       expect(decrypted).toBe(setup.umkBase64);
+      expect(messages).toHaveLength(0);
     });
   });
 

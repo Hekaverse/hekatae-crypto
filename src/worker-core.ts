@@ -38,7 +38,10 @@
  * is never base64-encoded inside this module except at that boundary.
  */
 
-import { deriveKeyPDK, deriveKeyPBKDF2 } from "./argon2.js";
+import {
+  derivePDKWithFallback,
+  tryWithPDKCandidates,
+} from "./argon2.js";
 import {
   generateDataKey,
   importPDK,
@@ -102,16 +105,11 @@ async function unwrapKeyLocal(
 
 async function derivePdkKey(
   password: string,
-  salt: string,
-  userId?: string
+  salt: string
 ): Promise<CryptoKey> {
-  const saltInput = userId ? salt + userId : salt;
-  let pdkBase64: string;
-  try {
-    pdkBase64 = await deriveKeyPDK({ pass: password, salt: saltInput });
-  } catch {
-    pdkBase64 = await deriveKeyPBKDF2(password, saltInput);
-  }
+  // Falls back to PBKDF2 only when Argon2id WASM is unavailable (logged via
+  // console.warn inside the worker realm).
+  const pdkBase64 = await derivePDKWithFallback(password, salt);
   return importPDK(pdkBase64);
 }
 
@@ -154,8 +152,7 @@ export class WorkerCryptoCore {
    * operations; only encrypted/wrapped material and shares are returned.
    */
   async setupUserKeys(
-    password: string,
-    userId?: string
+    password: string
   ): Promise<WorkerKeySetupResult> {
     // Raw UMK bytes. Shamir splitting needs the bytes, so the key exists in
     // extractable form only for the remainder of this call — then the raw
@@ -163,7 +160,7 @@ export class WorkerCryptoCore {
     const umkBytes = crypto.getRandomValues(new Uint8Array(32));
     try {
       const salt = generateSalt(32);
-      const pdkKey = await derivePdkKey(password, salt, userId);
+      const pdkKey = await derivePdkKey(password, salt);
 
       const umkExtractable = await crypto.subtle.importKey(
         "raw",
@@ -217,14 +214,13 @@ export class WorkerCryptoCore {
   async unlock(
     encryptedUMK: string,
     password: string,
-    salt: string,
-    userId?: string
+    salt: string
   ): Promise<void> {
-    const pdkKey = await derivePdkKey(password, salt, userId);
-    this.umk = await unwrapKeyLocal(encryptedUMK, pdkKey, false, [
-      "wrapKey",
-      "unwrapKey",
-    ]);
+    // Argon2id PDK first, legacy PBKDF2 PDK as second candidate (see
+    // tryWithPDKCandidates) so PBKDF2-wrapped accounts unlock here too.
+    this.umk = await tryWithPDKCandidates(password, salt, (pdkKey) =>
+      unwrapKeyLocal(encryptedUMK, pdkKey, false, ["wrapKey", "unwrapKey"])
+    );
   }
 
   /** Drop the held UMK. Subsequent key operations will reject until unlock. */
@@ -330,14 +326,27 @@ export class WorkerCryptoCore {
   async generateRecoveryShares(
     encryptedUMK: string,
     password: string,
-    salt: string,
-    userId?: string
+    salt: string
   ): Promise<WorkerRecoveryShares> {
-    const pdkKey = await derivePdkKey(password, salt, userId);
-    const umkExtractable = await unwrapKeyLocal(encryptedUMK, pdkKey, true, [
-      "wrapKey",
-      "unwrapKey",
-    ]);
+    // Capture whichever PDK candidate successfully unwrapped the UMK — the
+    // new shareA must be encrypted with the same key the user unlocks with.
+    let pdkKey: CryptoKey | null = null;
+    const umkExtractable = await tryWithPDKCandidates(
+      password,
+      salt,
+      async (candidate) => {
+        const key = await unwrapKeyLocal(encryptedUMK, candidate, true, [
+          "wrapKey",
+          "unwrapKey",
+        ]);
+        pdkKey = candidate;
+        return key;
+      }
+    );
+    if (!pdkKey) {
+      // Unreachable: tryWithPDKCandidates only resolves after attempt() set it.
+      throw new Error("PDK candidate missing after successful UMK unwrap");
+    }
     const raw = await crypto.subtle.exportKey("raw", umkExtractable);
     const umkBytes = new Uint8Array(raw);
     try {
@@ -358,14 +367,11 @@ export class WorkerCryptoCore {
   async exportUMK(
     encryptedUMK: string,
     password: string,
-    salt: string,
-    userId?: string
+    salt: string
   ): Promise<string> {
-    const pdkKey = await derivePdkKey(password, salt, userId);
-    const umkExtractable = await unwrapKeyLocal(encryptedUMK, pdkKey, true, [
-      "wrapKey",
-      "unwrapKey",
-    ]);
+    const umkExtractable = await tryWithPDKCandidates(password, salt, (pdkKey) =>
+      unwrapKeyLocal(encryptedUMK, pdkKey, true, ["wrapKey", "unwrapKey"])
+    );
     const raw = await crypto.subtle.exportKey("raw", umkExtractable);
     try {
       return arrayBufferToBase64(raw);
@@ -390,14 +396,13 @@ export class WorkerCryptoCore {
 // ─── Message protocol (shared by worker.ts and worker-client.ts) ───
 
 export type WorkerRequest =
-  | { id: number; op: "setupUserKeys"; password: string; userId?: string }
+  | { id: number; op: "setupUserKeys"; password: string }
   | {
       id: number;
       op: "unlock";
       encryptedUMK: string;
       password: string;
       salt: string;
-      userId?: string;
     }
   | { id: number; op: "lock" }
   | { id: number; op: "hasUMK" }
@@ -419,7 +424,6 @@ export type WorkerRequest =
       encryptedUMK: string;
       password: string;
       salt: string;
-      userId?: string;
     }
   | {
       id: number;
@@ -427,7 +431,6 @@ export type WorkerRequest =
       encryptedUMK: string;
       password: string;
       salt: string;
-      userId?: string;
     }
   | { id: number; op: "destroy" };
 
@@ -445,9 +448,9 @@ export async function handleRequest(
 ): Promise<unknown> {
   switch (req.op) {
     case "setupUserKeys":
-      return core.setupUserKeys(req.password, req.userId);
+      return core.setupUserKeys(req.password);
     case "unlock":
-      return core.unlock(req.encryptedUMK, req.password, req.salt, req.userId);
+      return core.unlock(req.encryptedUMK, req.password, req.salt);
     case "lock":
       core.lock();
       return undefined;
@@ -471,11 +474,10 @@ export async function handleRequest(
       return core.generateRecoveryShares(
         req.encryptedUMK,
         req.password,
-        req.salt,
-        req.userId
+        req.salt
       );
     case "exportUMK":
-      return core.exportUMK(req.encryptedUMK, req.password, req.salt, req.userId);
+      return core.exportUMK(req.encryptedUMK, req.password, req.salt);
     case "destroy":
       core.destroy();
       return undefined;
