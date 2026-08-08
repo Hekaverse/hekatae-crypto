@@ -165,7 +165,7 @@ describe("Key Derivation (UMK / PDK)", () => {
       // x-coordinate, and corrupting it can trip the library's duplicate-x
       // guard before sentinel verification (flaky). Middle bytes always
       // reach the sentinel check.
-      const tampered = "A" + setup.shareB.slice(1);
+      const tampered = (setup.shareB[0] === "A" ? "B" : "A") + setup.shareB.slice(1); // must differ — same-char tamper is a no-op flake
       await expect(
         reconstructUMKFromShares(setup.shareC, tampered, setup.sentinel)
       ).rejects.toThrow("Share verification failed");
